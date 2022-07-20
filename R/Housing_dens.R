@@ -298,10 +298,16 @@ is_vegetated_vect <- function(layer,template,veg_field="fccarb",
 	
 	if (missing(template)) {
 		template <- st_as_sf(st_as_sfc(st_bbox(layer)))
-		template <- st_buffer(template, blocks * resolution)
 		template <- vect(template)
 		template <- rast(template, resolution = resolution, crs = crs(layer))
 		origin(template) <- origin 
+	}
+	
+	if(!inherits(layer,"SpatVector")){
+		layer <- try(vect(layer))
+		if(inherits(layer,c("try-error"))){
+			stop("Error converting layer to SpatVector")
+		}
 	}
 	
 	if (inherits(template, c("Spatial","sf","SpatVector"))){
@@ -311,8 +317,7 @@ is_vegetated_vect <- function(layer,template,veg_field="fccarb",
 		}
 		template_created <- try({
 				template <- st_as_sf(st_as_sfc(st_bbox(template)))
-				template <- ext(vect(st_buffer(template, blocks * resolution)))
-				template <- rast(template, origin = origin, resolution = resolution)
+				template <- rast(template, origin = origin, resolution = resolution,crs(layer))
 				})
 		
 		if (inherits(template_created, "try-error")) {
@@ -333,16 +338,10 @@ is_vegetated_vect <- function(layer,template,veg_field="fccarb",
 		stop("No field provided with an sf layer")
 	}
 	
-	if(!inherits(layer,"SpatVector")){
-		layer <- try(vect(layer))
-		if(inherits(layer,c("try-error"))){
-			stop("Error converting layer to SpatVector")
-		}
-	}
 	if(inherits(layer,"SpatVector")){
 		
 		if(filter){
-			layer <- layer[layer[[field]]%in%forest_code,]
+			layer <- layer[layer[[forest_field]]%in%forest_code,]
 		}
 		
 		created <- try({
@@ -367,8 +366,6 @@ is_vegetated_vect <- function(layer,template,veg_field="fccarb",
 			stop("Error reclassifying")
 		}
 	}
-	
-
 	
 	if(missing(...)){
 		return(layer)
