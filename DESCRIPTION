@@ -1,0 +1,10 @@
+Package: RWUI
+Type: Package
+Version: 0.1-0
+Date: 2022-07-15
+Title: 
+Author: Francisco Mauro
+Maintainer: francisco.mauro@uva.es
+Description: 
+License: 
+RoxygenNote: 7.2.0
