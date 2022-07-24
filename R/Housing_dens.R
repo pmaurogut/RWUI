@@ -217,20 +217,23 @@ delineate_forest <- function(forest, forest_code = 1,to_raster=TRUE, ...){
 is_ember_exposed <- function(forest,template,
 		forest_field= "lulucf",  forest_code = 1,
 		max_ember_dist=2e3,min_patch_size=5e6,
-		resoultion=150,origin=0, ...){
+		to_raster=TRUE,resoultion=150,origin=0, ...){
 	
 	if(missing(forest)){
 		stop("Need forest layer to calculate exposure")
 	}
 
 	if(inherits(forest,c("Spatial","sf","SpatVector"))){
-		conversion <- try({
+		
+		if(inherits(forest,c("Spatial","SpatVector"))){
 			forest <-st_as_sf(forest)
+		}
+		conversion <- try({
 			forest <- forest[forest[[forest_field]]%in%forest_code,]
 			forest$area <- st_area(forest)
 			})
 
-		if (!inherits(conversion, "sf")) {
+		if (inherits(conversion, "try-error")) {
 			stop("forest cannot be converted to sf")
 		}
 	}
@@ -239,16 +242,23 @@ is_ember_exposed <- function(forest,template,
 		forest <- delineate_forest(forest,forest_code=forest_code)
 	}
 
-	forest <- forest[forest$area>min_patch_size,]
-	forest <- st_buffer(forest,max_ember_dist)
-	forest$exposed <- 1
-	forest <- st_union(forest)
-
+	
+	forest_crs <- crs(forest)
+	to_rasterize <- forest[as.numeric(forest$area)>min_patch_size,]
+	to_rasterize <- st_buffer(to_rasterize,max_ember_dist)
+	to_rasterize <- st_sf(exposed=1,st_union(to_rasterize))
+	
 	if(to_raster){
 
 		if(missing(template)){
-			template <- try(ext(vect(forest)))
-			template <- try(rast(extent= template, resolution = resolution, origin = origin, crs = crs(forest)))
+			
+			template_created <- try({
+				template<-ext(vect(forest))
+				template <- rast(extent= template,
+						resolution = resolution, crs = crs(forest))	
+				origin(template) <- origin
+			})
+			
 		}
 
 		if(inherits(template,c("try-error"))){
@@ -256,8 +266,9 @@ is_ember_exposed <- function(forest,template,
 		}
 
 		created <- try({
-			is_exposed <-terra::rasterize(forest,template,field="exposed")
-			origin((is_exposed))<-origin
+			is_exposed <-terra::rasterize(vect(to_rasterize),
+					template,field="exposed",crs=crs(template))
+			origin(is_exposed)<-origin
 		})
 
 		if(inherits(created,c("try-error"))){
@@ -273,9 +284,9 @@ is_ember_exposed <- function(forest,template,
 	}else{
 
 		if(missing(...)){
-			return(forest)
+			return(to_rasterize)
 		}else{
-			st_write(forest,...)
+			st_write(to_rasterize,...)
 		}
 	}
 	
@@ -334,7 +345,7 @@ is_vegetated_vect <- function(layer,template,veg_field="fccarb",
 	if (!inherits(template, "SpatRaster")) {
 		stop("template is not a SpatRaster and cannot be used as template")
 	}
-	if(missing(field)){
+	if(missing(forest_field)){
 		stop("No field provided with an sf layer")
 	}
 	
@@ -359,7 +370,7 @@ is_vegetated_vect <- function(layer,template,veg_field="fccarb",
 		reclassed <- try({
 					rclmat <- matrix(c(0, 50, 0,
 									50, 1000, 1), ncol=3, byrow=TRUE)
-					layer <- terra::classify(layer, rclmat, include.lowest=TRUE)
+					layer <- terra::classify(is_veg, rclmat, include.lowest=TRUE)
 				})
 		
 		if(inherits(reclassed,c("try-error"))){
@@ -376,17 +387,18 @@ is_vegetated_vect <- function(layer,template,veg_field="fccarb",
 
 
 forest$is_forest <- 1
-is_forest <- is_vegetated_vect(forest,,veg_field="fccarb",
-		filter= FALSE,forest_field= "lulucf", forest_code = is_forest_mfe,
+is_forest <- is_vegetated_vect(forest,veg_field="fccarb",
+		filter= TRUE,forest_field= "lulucf", forest_code = is_forest_mfe,
 		filename="Data/is_forest.tif",overwrite=TRUE)
 
-is_exposed <- is_ember_exposed(forest,field="lulucf",forest_code = is_forest_mfe,
+is_exposed <- is_ember_exposed(forest,
+		forest_field= "lulucf",  forest_code = is_forest_mfe,
+		max_ember_dist=2e3,min_patch_size=5e6,
+		resoultion=150,origin=0,
 		filename="Data/is_exposed.tif",overwrite=TRUE)
 
-is_vegetated<-get_forest_mfe(forest,field="lulucf",filename="Data/is_vegetated.tif",overwrite=TRUE)
-
-housing_dens<-housing_dens(houses,is_vegetated,filename="Data/housing_density.tif",overwrite=TRUE)
-classes <- stewart_wui(housing_dens,is_vegetated,is_exposed,
+housing_dens<-housing_dens(houses,is_forest,filename="Data/housing_density.tif",overwrite=TRUE)
+classes <- stewart_wui(housing_dens,is_forest,is_exposed,
 		filename="Data/stewart.tif",overwrite=TRUE)
 plot(classes)
 
