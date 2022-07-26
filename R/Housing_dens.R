@@ -5,32 +5,48 @@
 library("terra")
 library("raster")
 library("sf")
-setwd("C:/Users/Paco/OneDrive - UVa/CambiumWS/MFE_IFN")
-houses <- st_read("Data/CATASTRO/MADRID/MADRID_merged.gpkg", layer = "Building")
-houses <- houses[houses$currentUse %in% c("1_residential", "3_industrial", "4_3_publicServices"), ]
-houses <- houses[houses$conditionOfConstruction == "functional", ]
+setwd("C:/Users/UVa/OneDrive - UVa/CambiumWS/MFE_IFN")
 
-forest <- st_read("Data/MFE/mfe_Madrid/mfe_madrid.shp")
-forest <- st_transform(forest, crs(houses))
-# forest <- st_write(forest, "",delete_layer=TRUE)
-is_forest_mfe <- c(
-    "Pastizal-Matorral", "Herbazal-Pastizal",
-    "Bosque", "Bosque de Plantación", "Bosquetes", "Prados",
-    "Galerías arbustivas", "Arbustedos", "Msc desarb/suelo desnudo"
-)
 
-is_forest_mfe <- data.frame(lulucf = unique(forest$lulucf), is_forest = NA)
-
-is_forest_mfe <- unique(forest$lulucf)
-is_forest_mfe <- is_forest_mfe[is_forest_mfe < 200]
-is_forest_mfe <- c(is_forest_mfe, 400)
-
-field <- "lulucf"
-resolution <- 150
-origin <- 0
-categories <- is_forest <- is_forest_mfe
-layer <- forest
-
+create_template <- function(layer, buffer=0, resolution,origin){
+	
+	if(missing(layer)){
+		stop("Layer needed to create extent")
+	}
+	
+	if(inherits(layer,c("SpatVector","sf"))){
+		
+		if(inherits(layer,"sf")){
+			layer <- vect(layer)
+		}
+		
+	}else if(inherits(layer,c("SpatRaster","Raster"))) {
+		if(inherits(layer,"Raster")){
+			layer <- rast(layer)
+		}
+		resolution <- res(layer)
+		origin <- origin(layer)
+	}
+	
+	template_created <- try({
+		template<-as.polygons(ext(layer))
+		if(buffer>0){
+			template <- buffer(template)
+			template <- ext(template)
+		}else{
+			template <- ext(template)
+		}
+		template <- rast(extent= template,
+				resolution = resolution, crs = crs(layer))	
+		origin(template) <- origin
+			})
+	if(inherits(template_created,"try-error")){
+		stop("Unable to create template")
+	}else{
+		return(template)
+	}
+	
+}
 
 #' 
 #' @param housing_dens 
@@ -42,24 +58,26 @@ layer <- forest
 #' 
 #' @author Paco
 #' @export
-stewart_wui <- function(housing_dens, is_vegetated, is_exposed, ...) {
-    res <- terra::overlay(housing_dens, is_vegetated, is_exposed,
-        fun = function(x, y, z) {
-            reclass_stewart_wui(x, y, z)
-        }
+stewart_wui <- function(housing_density, is_forest, is_exposed, ...) {
+	
+	housing_density <- as(housing_density,"Raster")
+	is_forest <- as(is_forest,"Raster")
+	is_exposed <- as(is_exposed,"Raster")
+    res <- raster::overlay(housing_density, is_forest, is_exposed,
+            fun=function(x,y,z){reclass_stewart_wui(x,y,z)}
     )
-    levels(resolution) <- c(
-        "0", "a", "b", "Vegetated no Housing",
-        "Dispersed rural", "Intermix", "Interface"
-    )
+	res <- rast(res)
+	levels(res) <- c(
+			"0", "a", "b", "Vegetated no Housing",
+			"Dispersed rural", "Intermix", "Interface"
+			)
 
     if (missing(...)) {
-        return(resolution)
+        return(res)
     } else {
-        writeRaster(resolution, ...)
+        writeRaster(res, ...)
     }
 }
-
 
 #' 
 #' @param housing_dens 
@@ -105,25 +123,8 @@ reclass_stewart_wui <- function(housing_dens, is_vegetated, is_exposed) {
 housing_dens <- function(houses, template, resolution = 150, 
 						blocks = 3, origin = 0, classes = FALSE, ...) {
     if (missing(template)) {
-        template <- st_as_sf(st_as_sfc(st_bbox(houses)))
-        template <- st_buffer(template, blocks * resolution)
-        template <- vect(template)
-        template <- rast(template, resolution = resolution, crs = crs(houses))
-        origin(template) <- origin 
-    }
-    if (inherits(template, "sf")) {
-        template <- st_as_sf(st_as_sfc(st_bbox(template)))
-        template <- ext(vect(st_buffer(template, blocks * resolution)))
-        template <- rast(template, origin = origin, resolution = resolution)
-        if (inherits(template, "try-error")) {
-            stop("Wrong template, it cannot be converted to SpatRaster")
-        }
-    }
-    if (inherits(template, "Raster")) {
-        template <- try(rast(template))
-        if (inherits(template, "try-error")) {
-            stop("Wrong template, it cannot be converted to SpatRaster")
-        }
+        template <- create_template(houses,buffer=resolution*blocks,
+				resolution=resolution,origin=origin)
     }
     if (!inherits(template, "SpatRaster")) {
         stop("template is not a SpatRaster and cannot be used as template")
@@ -143,7 +144,7 @@ housing_dens <- function(houses, template, resolution = 150,
         template,
         fun = length, background = 0
     )
-    resolution <- resolution(template)[1]
+    resolution <- res(template)[1]
     density <- terra::focal(density, w = matrix(1, nc = blocks, nr = blocks))
     density <- 1e6 * density / ((blocks * resolution)^2)
 
@@ -183,7 +184,7 @@ delineate_forest <- function(forest, forest_code = 1,to_raster=TRUE, ...){
 	polys <- polys[,c("id","area")]
 	
 	if(to_raster){
-		forest_only<- try(terra::rasterize(vect(polys),forest_only, "exposed"))
+		forest_only<- try(terra::rasterize(vect(polys),forest_only, "id"))
 		if(missing(...)){
 			return(forest_only)
 		}else{
@@ -222,53 +223,56 @@ is_ember_exposed <- function(forest,template,
 	if(missing(forest)){
 		stop("Need forest layer to calculate exposure")
 	}
+	
 
-	if(inherits(forest,c("Spatial","sf","SpatVector"))){
+	if(inherits(forest,c("sf","SpatVector"))){
 		
-		if(inherits(forest,c("Spatial","SpatVector"))){
+		if(inherits(forest,c("SpatVector"))){
 			forest <-st_as_sf(forest)
 		}
 		conversion <- try({
 			forest <- forest[forest[[forest_field]]%in%forest_code,]
-			forest$area <- st_area(forest)
 			})
 
 		if (inherits(conversion, "try-error")) {
 			stop("forest cannot be converted to sf")
 		}
-	}
-
-	if(inherits(forest,c("raster","SpatRaster"))){
+	}else 	if(inherits(forest,c("raster","SpatRaster"))){
 		forest <- delineate_forest(forest,forest_code=forest_code)
 	}
 
 	
-	forest_crs <- crs(forest)
-	to_rasterize <- forest[as.numeric(forest$area)>min_patch_size,]
-	to_rasterize <- st_buffer(to_rasterize,max_ember_dist)
-	to_rasterize <- st_sf(exposed=1,st_union(to_rasterize))
+	filter_dissolve <- try({
+		forest_crs <- crs(forest)
+		to_rasterize <- st_sf(exposed=1,st_union(forest))
+		to_rasterize$area <- st_area(to_rasterize)
+		to_rasterize <- to_rasterize[as.numeric(to_rasterize$area)>min_patch_size,]
+		to_rasterize <- st_buffer(to_rasterize,max_ember_dist)
+		to_rasterize <- vect(to_rasterize)
+			})
+
+	if(inherits(filter_dissolve,"try-error")){
+		stop("Could not dissolve forest polygons and filter polygons < min_patch_size")
+	}
 	
 	if(to_raster){
 
-		if(missing(template)){
-			
-			template_created <- try({
-				template<-ext(vect(forest))
-				template <- rast(extent= template,
-						resolution = resolution, crs = crs(forest))	
-				origin(template) <- origin
-			})
-			
+		if (missing(template)) {
+			if(inherits(forest,"SpatRaster")){
+				template <- forest
+			}else{
+				template <- create_template(forest,buffer=0,
+						resolution=resolution,origin=origin)
+			}
 		}
-
-		if(inherits(template,c("try-error"))){
-			stop("Cannot create template")
+		
+		if (!inherits(template, "SpatRaster")) {
+			stop("template is not a SpatRaster and cannot be used as template")
 		}
 
 		created <- try({
-			is_exposed <-terra::rasterize(vect(to_rasterize),
+			is_exposed <-terra::rasterize(to_rasterize,
 					template,field="exposed",crs=crs(template))
-			origin(is_exposed)<-origin
 		})
 
 		if(inherits(created,c("try-error"))){
@@ -286,7 +290,7 @@ is_ember_exposed <- function(forest,template,
 		if(missing(...)){
 			return(to_rasterize)
 		}else{
-			st_write(to_rasterize,...)
+			writeVector(to_rasterize,...)
 		}
 	}
 	
@@ -307,13 +311,16 @@ is_vegetated_vect <- function(layer,template,veg_field="fccarb",
 		filter= FALSE,forest_field= "lulucf", forest_code = 1,reclass=TRUE,
 		resolution = 150, origin = 0, ...){
 	
-	if (missing(template)) {
-		template <- st_as_sf(st_as_sfc(st_bbox(layer)))
-		template <- vect(template)
-		template <- rast(template, resolution = resolution, crs = crs(layer))
-		origin(template) <- origin 
-	}
 	
+	if (missing(template)) {
+		template <- create_template(layer,buffer=0,
+				resolution=resolution,origin=origin)
+	}
+		
+	if (!inherits(template, "SpatRaster")) {
+		stop("template is not a SpatRaster and cannot be used as template")
+	}
+
 	if(!inherits(layer,"SpatVector")){
 		layer <- try(vect(layer))
 		if(inherits(layer,c("try-error"))){
@@ -321,49 +328,20 @@ is_vegetated_vect <- function(layer,template,veg_field="fccarb",
 		}
 	}
 	
-	if (inherits(template, c("Spatial","sf","SpatVector"))){
-		
-		if(inherits(template, c("Spatial","SpatVector"))){
-			template <- st_as_sf(template)
-		}
-		template_created <- try({
-				template <- st_as_sf(st_as_sfc(st_bbox(template)))
-				template <- rast(template, origin = origin, resolution = resolution,crs(layer))
-				})
-		
-		if (inherits(template_created, "try-error")) {
-			stop("Wrong template, it cannot be converted to SpatRaster")
-		}
-		
-	}
-	if (inherits(template, "Raster")) {
-		template <- try(rast(template))
-		if (inherits(template, "try-error")) {
-			stop("Wrong template, it cannot be converted to SpatRaster")
-		}
-	}
-	if (!inherits(template, "SpatRaster")) {
-		stop("template is not a SpatRaster and cannot be used as template")
-	}
 	if(missing(forest_field)){
-		stop("No field provided with an sf layer")
+		stop("No field provided ")
 	}
 	
-	if(inherits(layer,"SpatVector")){
-		
-		if(filter){
-			layer <- layer[layer[[forest_field]]%in%forest_code,]
-		}
-		
-		created <- try({
-					is_veg <-terra::rasterize(layer,template,field=veg_field)
-				})
-			
-		if(inherits(created,c("try-error"))){
-			stop("Error rasterizing")
-		}
-	}else{
-		stop("layer could not be converted to SpatVector")
+	if(filter){
+		layer <- layer[layer[[forest_field]][,1]%in%forest_code,]
+	}
+	
+	created <- try({
+				is_veg <-terra::rasterize(layer,template,field=veg_field)
+			})
+	
+	if(inherits(created,c("try-error"))){
+		stop("Error rasterizing")
 	}
 	
 	if(reclass){
@@ -386,107 +364,48 @@ is_vegetated_vect <- function(layer,template,veg_field="fccarb",
 }
 
 
+houses <- st_read("Data/CATASTRO/42/Merged_42.gpkg",
+		layer = "Building")
+houses <- houses[houses$currentUse %in% c("1_residential", "3_industrial", "4_3_publicServices"), ]
+houses <- houses[houses$conditionOfConstruction == "functional", ]
+
+forest <- st_read("Data/MFE/mfe_castillayleon/mfe_CastillayLeon.shp")
+forest <- forest[forest$prov_nom=="Soria",]
+forest <- st_transform(forest, crs(houses))
+# forest <- st_write(forest, "",delete_layer=TRUE)
+
+
+is_forest_mfe <- unique(forest[["lulucf"]])
+is_forest_mfe <- is_forest_mfe[is_forest_mfe<=200]
+is_forest_mfe <- c(is_forest_mfe, 400)
+
 forest$is_forest <- 1
+
 is_forest <- is_vegetated_vect(forest,veg_field="fccarb",
 		filter= TRUE,forest_field= "lulucf", forest_code = is_forest_mfe,
 		filename="Data/is_forest.tif",overwrite=TRUE)
 
-is_exposed <- is_ember_exposed(forest,
+is_exposed <- is_ember_exposed(forest,template=is_forest,
 		forest_field= "lulucf",  forest_code = is_forest_mfe,
 		max_ember_dist=2e3,min_patch_size=5e6,
 		resoultion=150,origin=0,
 		filename="Data/is_exposed.tif",overwrite=TRUE)
 
-housing_dens<-housing_dens(houses,is_forest,filename="Data/housing_density.tif",overwrite=TRUE)
-classes <- stewart_wui(housing_dens,is_forest,is_exposed,
+#is_exposed_poly <- is_ember_exposed(forest,template=is_forest,
+#		forest_field= "lulucf",  forest_code = is_forest_mfe,
+#		max_ember_dist=2e3,min_patch_size=5e6,to_raster=FALSE,
+#		resoultion=150,origin=0,
+#		filename="Data/is_exposed.gpkg",overwrite=TRUE)
+#
+#forest_poly <- is_exposed_poly <- is_ember_exposed(forest,template=is_forest,
+#		forest_field= "lulucf",  forest_code = is_forest_mfe,
+#		max_ember_dist=2e3,min_patch_size=0,to_raster=FALSE,
+#		resoultion=150,origin=0,
+#		filename="Data/forest.gpkg",overwrite=TRUE)
+
+
+housing_density<-housing_dens(houses,is_forest,filename="Data/housing_density.tif",overwrite=TRUE)
+classes <- stewart_wui(housing_density,is_forest,is_exposed,
 		filename="Data/stewart.tif",overwrite=TRUE)
 plot(classes)
-
-
-field="lulucf";forest_code = is_forest_mfe;
-filename="Data/is_exposed.tif";overwrite=TRUE
-max_ember_dist=2e3;min_patch_size=5e6
-
-
-housing_dens_categories <- function(density,...){
-	
-	if(missing(density)){
-		stop("Missing housing density")
-	}else{
-		if(!inherits(density,"SpatRaster")){
-			density <- try(rast(density))
-			if(inherits(density,"try-error")){
-				stop("Housing density layer cannot be converted to SpatRaster")
-			}
-		}
-	}
-	
-	rclmat <- matrix(c(0, 6.18e-6, 0,
-					6.18e-6, 49.42e-6, 1,
-					6.18e-6,Inf,2), ncol=3, byrow=TRUE)
-	density <- classify(density, rclmat, include.lowest=TRUE)
-	density <- levels(density,c("very-low","low","medium_high"))
-	if(missing(...)){
-		return(density)
-	}else{
-		writeRaster(density,...)
-	}
-	
-	
-}
-
-
-#' 
-#' @param layer 
-#' @param field 
-#' @param resolution 
-#' @param origin 
-#' @param ... 
-#' @returnType 
-#' @return 
-#' 
-#' @author Paco
-#' @export
-get_fccarb_mfe <- function(layer, resolution = 150, origin = 0, ...){
-	
-	if(!inherits(layer,c("Spatial","sf","SpatVect"))){
-		stop("layer must be an spatial, sf or SpatVect Object")
-	}
-	if(inherits(layer,"Spatial")){
-		layer <- as(layer,"sf")
-		layer <- try(vect(layer))
-		if(inherits(template,"try-error")){
-			stop("Failed creating template")
-		}
-	}
-	if(inherits(layer,"sf")){
-		layer <- try(vect(layer))
-		if(inherits(layer,"try-error")){
-			stop("Failed converting layer to SpatVector")
-		}
-	}
-	if(inherits(layer,"SpatVector")){
-		template <- try(raster::raster(st_as_sf(layer),
-						origin = origin,resolution=resolution))
-		template <- try(rast(template))
-		if(inherits(template,"try-error")){
-			stop("Failed creating template")
-		}
-	}
-	
-	layer <- try(terra::rasterize(layer,template, "fccarb"))
-	if(inherits(layer,"try-error")){
-		stop("Failed rasterizing layer")
-	}
-	
-	if(missing(...)){
-		return(layer)
-	}else{
-		writeRaster(layer,...)
-	}
-	
-}
-
-fccarb_mfe <- get_fccarb_mfe(forest,filename="Data/Test_get_fccarb_mfe.tif",overwrite=TRUE)
-
 
