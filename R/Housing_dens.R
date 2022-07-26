@@ -46,7 +46,8 @@ create_template <- function(layer, buffer=0, resolution,origin){
 		return(template)
 	}
 	
-}
+} 
+ 
  
 
 #' 
