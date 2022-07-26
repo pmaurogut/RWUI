@@ -50,6 +50,7 @@ create_template <- function(layer, buffer=0, resolution,origin){
  
  
 
+
 #' 
 #' @param housing_dens 
 #' @param is_vegetated 
