@@ -5,9 +5,19 @@
 library("terra")
 library("raster")
 library("sf")
-setwd("C:/Users/UVa/OneDrive - UVa/CambiumWS/MFE_IFN")
+setwd("C:/Users/Paco/OneDrive - UVa/CambiumWS/MFE_IFN")
 
 
+#' Helper function to facilitate creating aligned grids
+#' @param layer: layer to take as reference for extent and crs
+#' @param buffer: optionall buffer areas before computing the final extent
+#' @param resolution: resolution of derived raster 
+#' @param origin : origin for the derived raster. See \link[terra]{origin}
+#' @returnType 
+#' @return 
+#' 
+#' @author Paco
+#' @export
 create_template <- function(layer, buffer=0, resolution,origin){
 	
 	if(missing(layer)){
@@ -48,12 +58,9 @@ create_template <- function(layer, buffer=0, resolution,origin){
 	
 } 
  
- 
-
-
 #' 
-#' @param housing_dens 
-#' @param is_vegetated 
+#' @param housing_density 
+#' @param is_forest 
 #' @param is_exposed 
 #' @param ... 
 #' @returnType 
@@ -111,16 +118,18 @@ reclass_stewart_wui <- function(housing_dens, is_vegetated, is_exposed) {
     return(cat1 + cat2 + cat3 + cat4 + cat5 + cat6)
 }
 
-#'
-#' @param houses
-#' @param aoi
-#' @param resolution
-#' @param blocks
-#' @param origin
-#' @param ...
-#' @returnType
-#' @return
-#'
+
+#' 
+#' @param houses 
+#' @param template 
+#' @param resolution 
+#' @param blocks 
+#' @param origin 
+#' @param classes 
+#' @param ... 
+#' @returnType 
+#' @return 
+#' 
 #' @author Paco
 #' @export
 housing_dens <- function(houses, template, resolution = 150, 
@@ -206,10 +215,11 @@ delineate_forest <- function(forest, forest_code = 1,to_raster=TRUE, ...){
 #' 
 #' @param forest 
 #' @param template 
+#' @param forest_field 
 #' @param forest_code 
-#' @param forest_fiel 
-#' @param buffer_dist 
 #' @param max_ember_dist 
+#' @param min_patch_size 
+#' @param to_raster 
 #' @param resoultion 
 #' @param origin 
 #' @param ... 
@@ -221,7 +231,7 @@ delineate_forest <- function(forest, forest_code = 1,to_raster=TRUE, ...){
 is_ember_exposed <- function(forest,template,
 		forest_field= "lulucf",  forest_code = 1,
 		max_ember_dist=2e3,min_patch_size=5e6,
-		to_raster=TRUE,resoultion=150,origin=0, ...){
+		raster_distance=TRUE, to_raster=TRUE,resoultion=150,origin=0, ...){
 	
 	if(missing(forest)){
 		stop("Need forest layer to calculate exposure")
@@ -247,18 +257,48 @@ is_ember_exposed <- function(forest,template,
 	
 	filter_dissolve <- try({
 		forest_crs <- crs(forest)
-		to_rasterize <- st_sf(exposed=1,st_union(forest))
-		to_rasterize$area <- st_area(to_rasterize)
-		to_rasterize <- to_rasterize[as.numeric(to_rasterize$area)>min_patch_size,]
-		to_rasterize <- st_buffer(to_rasterize,max_ember_dist)
-		to_rasterize <- vect(to_rasterize)
+		filtered <- st_sf(exposed=1,st_union(forest))
+		filtered$area <- st_area(filtered)
+		filtered <- filtered[as.numeric(filtered$area)>min_patch_size,]
+	
 			})
 
 	if(inherits(filter_dissolve,"try-error")){
 		stop("Could not dissolve forest polygons and filter polygons < min_patch_size")
 	}
 	
+	
+	if(raster_distance){
+		
+		filtered <- vect(filtered)
+		created <- try({
+					filtered$large_forest<-1
+					forest <-terra::rasterize(filtered,
+							template,field="large_forest",crs=crs(template))
+					is_exposed <- distance(forest)
+					is_exposed[] <- ifelse(exposed[]>max_ember_dist,0,1)
+				})
+		print("check1")
+		if(inherits(created,c("try-error"))){
+			stop("Error computing distances from raster")
+		}
+		
+	}else{
+		buffer <- try({
+					filtered <- st_buffer(filtered,max_ember_dist)
+					filtered$is_exposed <- TRUE
+					filtered <- vect(filtered)
+				})
+		
+		if(inherits(created,c("try-error"))){
+			stop("Error computing buffer polygons")
+		}
+	}
+	
+	
 	if(to_raster){
+		
+		print("check2")
 
 		if (missing(template)) {
 			if(inherits(forest,"SpatRaster")){
@@ -273,35 +313,51 @@ is_ember_exposed <- function(forest,template,
 			stop("template is not a SpatRaster and cannot be used as template")
 		}
 
-		created <- try({
-			is_exposed <-terra::rasterize(to_rasterize,
-					template,field="exposed",crs=crs(template))
-		})
-
-		if(inherits(created,c("try-error"))){
-			stop("Error rasterizing")
+		if(raster_distance==FALSE){
+			
+			created <- try({
+						is_exposed <-terra::rasterize(filtered,
+								template,field="is_exposed",crs=crs(template))
+					})
+			if(inherits(created,c("try-error"))){
+				stop("Error rasterizing")
+			}
 		}
 
+		
 		if(missing(...)){
 			return(is_exposed)
 		}else{
 			writeRaster(is_exposed,...)
 		}
-
+		
 	}else{
-
-		if(missing(...)){
-			return(to_rasterize)
-		}else{
-			writeVector(to_rasterize,...)
+		
+		if(raster_distance){
+			
+			filtered <- delineate_forest(filtered,1,to_raster=FALSE)
+			filtered$is_exposed <- 1
 		}
+
+			
+		if(missing(...)){
+			return(filtered)
+		}else{
+			writeVector(filtered,...)
+		}
+	
 	}
 	
 }
 
 #' 
 #' @param layer 
-#' @param field 
+#' @param template 
+#' @param veg_field 
+#' @param filter 
+#' @param forest_field 
+#' @param forest_code 
+#' @param reclass 
 #' @param resolution 
 #' @param origin 
 #' @param ... 
@@ -367,16 +423,14 @@ is_vegetated_vect <- function(layer,template,veg_field="fccarb",
 }
 
 
-houses <- st_read("Data/CATASTRO/42/Merged_42.gpkg",
+houses <- st_read("Data/CATASTRO/CATASTRO_CyL.gpkg",
 		layer = "Building")
 houses <- houses[houses$currentUse %in% c("1_residential", "3_industrial", "4_3_publicServices"), ]
 houses <- houses[houses$conditionOfConstruction == "functional", ]
 
 forest <- st_read("Data/MFE/mfe_castillayleon/mfe_CastillayLeon.shp")
-forest <- forest[forest$prov_nom=="Soria",]
 forest <- st_transform(forest, crs(houses))
 # forest <- st_write(forest, "",delete_layer=TRUE)
-
 
 is_forest_mfe <- unique(forest[["lulucf"]])
 is_forest_mfe <- is_forest_mfe[is_forest_mfe<=200]
@@ -386,13 +440,14 @@ forest$is_forest <- 1
 
 is_forest <- is_vegetated_vect(forest,veg_field="fccarb",
 		filter= TRUE,forest_field= "lulucf", forest_code = is_forest_mfe,
-		filename="Data/is_forest.tif",overwrite=TRUE)
+		filename="Output/is_forest.tif",overwrite=TRUE)
+housing_density<-housing_dens(houses,is_forest,filename="Output/housing_density.tif",overwrite=TRUE)
 
 is_exposed <- is_ember_exposed(forest,template=is_forest,
 		forest_field= "lulucf",  forest_code = is_forest_mfe,
 		max_ember_dist=2e3,min_patch_size=5e6,
 		resoultion=150,origin=0,
-		filename="Data/is_exposed.tif",overwrite=TRUE)
+		filename="Output/is_exposed.tif",overwrite=TRUE)
 
 #is_exposed_poly <- is_ember_exposed(forest,template=is_forest,
 #		forest_field= "lulucf",  forest_code = is_forest_mfe,
@@ -407,7 +462,7 @@ is_exposed <- is_ember_exposed(forest,template=is_forest,
 #		filename="Data/forest.gpkg",overwrite=TRUE)
 
 
-housing_density<-housing_dens(houses,is_forest,filename="Data/housing_density.tif",overwrite=TRUE)
+
 classes <- stewart_wui(housing_density,is_forest,is_exposed,
 		filename="Data/stewart.tif",overwrite=TRUE)
 plot(classes)
