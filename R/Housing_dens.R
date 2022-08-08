@@ -134,8 +134,8 @@ stewart_wui <- function(housing_density, is_forest, is_exposed, ...) {
 #' 
 #' @author Paco
 #' @export
-housing_dens <- function(houses, template, resolution = 50, 
-						distance = 450, kernel="circular", origin = 0, classes = FALSE, ...) {
+housing_dens <- function(houses, template, resolution = 150, 
+						distance = 225, kernel="circular", origin = 0, classes = FALSE, ...) {
     if (missing(template)) {
         template <- create_template(houses,buffer=resolution*blocks,
 				resolution=resolution,origin=origin)
@@ -170,7 +170,7 @@ housing_dens <- function(houses, template, resolution = 50,
 	}else{
 		blocks <- 2*ceiling(distance/resolution)+1
 		w <- matrix(1, nc = blocks, nr = blocks)
-		w <- 1e6*w/(blocks * resolution)^2
+		w <- 1e6*w/(length(blocks) * resolution)^2
 	}
 
     density <- terra::focal(density,w=w)
