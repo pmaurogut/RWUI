@@ -468,6 +468,81 @@ is_vegetated_vect <- function(layer,template,veg_field="fccarb",
 }
 
 
+#' 
+#' @param layer 
+#' @param template 
+#' @param forest_field 
+#' @param forest_code 
+#' @param reclass 
+#' @param resolution 
+#' @param origin 
+#' @param ... 
+#' @returnType 
+#' @return 
+#' 
+#' @author Paco
+#' @export
+vegetated_cover_vect <- function(layer,template,filter=TRUE,
+		forest_field= "lulucf", forest_code = 1,reclass=TRUE,
+		resolution = 150, origin = 0, ...){
+	
+	
+	if (missing(template)) {
+		template <- create_template(layer,buffer=0,
+				resolution=resolution,origin=origin)
+	}
+	
+	if (!inherits(template, "SpatRaster")) {
+		stop("template is not a SpatRaster and cannot be used as template")
+	}
+	
+	if(!inherits(layer,"SpatVector")){
+		layer <- try(vect(layer))
+		if(inherits(layer,c("try-error"))){
+			stop("Error converting layer to SpatVector")
+		}
+	}
+	
+	if(missing(forest_field)){
+		stop("No field provided ")
+	}
+	
+	if(filter){
+		layer <- layer[layer[[forest_field]][,1]%in%forest_code,]
+		layer$is_forest <- TRUE
+	}
+	
+	created <- try({
+				layer <- st_as_sf(layer)
+				template <- raster(template)
+				forest_cover <-raster::rasterize(layer,template,getCover=TRUE)
+				forest_cover <- rast(forest_cover)
+			})
+	
+	if(inherits(created,c("try-error"))){
+		stop("Error rasterizing")
+	}
+	
+	if(reclass){
+		reclassed <- try({
+					rclmat <- matrix(c(0, 0.50, 0,
+									0.50, 2, 1), ncol=3, byrow=TRUE)
+					layer <- terra::classify(forest_cover, rclmat, include.lowest=TRUE)
+				})
+		
+		if(inherits(reclassed,c("try-error"))){
+			stop("Error reclassifying")
+		}
+	}
+	
+	if(missing(...)){
+		return(layer)
+	}else{
+		writeRaster(layer,...)
+	}
+}
+
+
 houses <- st_read("Data/CATASTRO/CATASTRO_CyL.gpkg",
 		layer = "Building")
 houses <- houses[houses$currentUse %in% c("1_residential", "3_industrial", "4_3_publicServices"), ]
@@ -486,6 +561,8 @@ forest$is_forest <- 1
 is_forest <- is_vegetated_vect(forest,veg_field="fccarb",
 		filter= TRUE,forest_field= "lulucf", forest_code = is_forest_mfe,
 		filename="Output/is_forest.tif",overwrite=TRUE)
+cover <- vegetated_cover_vect(forest,forest_field= "lulucf", forest_code = is_forest_mfe,
+		filename="Output/forest_cover.tif",overwrite=TRUE)
 housing_density<-housing_dens(houses,is_forest,filename="Output/housing_density.tif",overwrite=TRUE)
 
 is_exposed <- is_ember_exposed(forest,template=is_forest,
