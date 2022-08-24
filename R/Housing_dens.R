@@ -8,17 +8,6 @@ library("sf")
 setwd("C:/Users/Paco/OneDrive - UVa/CambiumWS/MFE_IFN")
 
 
-
-#' Helper function to facilitate creating aligned grids
-#' @param layer: layer to take as reference for extent and crs
-#' @param buffer: optionall buffer areas before computing the final extent
-#' @param resolution: resolution of derived raster 
-#' @param origin : origin for the derived raster. See \link[terra]{origin}
-#' @returnType 
-#' @return 
-#' 
-#' @author Paco
-#' @export
 create_template <- function(layer, buffer=0,origin=0, resolution){
 	
 	if(missing(layer)){
@@ -66,15 +55,6 @@ create_template <- function(layer, buffer=0,origin=0, resolution){
 } 
 
 
-#' 
-#' @param housing_dens 
-#' @param is_vegetated 
-#' @param is_exposed 
-#' @returnType 
-#' @return 
-#' 
-#' @author Paco
-#' @export
 reclass_stewart_wui <- function(housing_dens, is_vegetated, is_exposed) {
 	
 	
@@ -94,16 +74,7 @@ reclass_stewart_wui <- function(housing_dens, is_vegetated, is_exposed) {
 }
 
 
-#' 
-#' @param housing_density 
-#' @param is_forest 
-#' @param is_exposed 
-#' @param ... 
-#' @returnType 
-#' @return 
-#' 
-#' @author Paco
-#' @export
+
 stewart_wui <- function(housing_density, is_forest, is_exposed, ...) {
 	
 	housing_density <- as(housing_density,"Raster")
@@ -128,19 +99,7 @@ stewart_wui <- function(housing_density, is_forest, is_exposed, ...) {
 
 
 
-#' 
-#' @param houses 
-#' @param template 
-#' @param resolution 
-#' @param blocks 
-#' @param origin 
-#' @param classes 
-#' @param ... 
-#' @returnType 
-#' @return 
-#' 
-#' @author Paco
-#' @export
+
 housing_dens <- function(houses, template, origin = 0,resolution = 150, 
 						distance = 225, kernel="circular",  classes = FALSE, ...) {
     
@@ -186,13 +145,6 @@ housing_dens <- function(houses, template, origin = 0,resolution = 150,
 }
 
 
-#' 
-#' @param fcc 
-#' @returnType 
-#' @return 
-#' 
-#' @author Paco
-#' @export
 delineate_forest <- function(forest, forest_code = 1,to_raster=TRUE, ...){
 	
 	if(!inherits(forest,"SpatRast")){
@@ -225,22 +177,7 @@ delineate_forest <- function(forest, forest_code = 1,to_raster=TRUE, ...){
 }
 
 
-#' 
-#' @param forest 
-#' @param template 
-#' @param forest_field 
-#' @param forest_code 
-#' @param max_ember_dist 
-#' @param min_patch_size 
-#' @param to_raster 
-#' @param resoultion 
-#' @param origin 
-#' @param ... 
-#' @returnType 
-#' @return 
-#' 
-#' @author Paco
-#' @export
+
 is_ember_exposed <- function(forest,template,
 		forest_field= "lulucf",  forest_code = 1,
 		max_ember_dist=2e3,min_patch_size=5e6,
@@ -381,22 +318,7 @@ is_ember_exposed <- function(forest,template,
 	
 }
 
-#' 
-#' @param layer 
-#' @param template 
-#' @param veg_field 
-#' @param filter 
-#' @param forest_field 
-#' @param forest_code 
-#' @param reclass 
-#' @param resolution 
-#' @param origin 
-#' @param ... 
-#' @returnType 
-#' @return 
-#' 
-#' @author Paco
-#' @export
+
 is_vegetated_vect <- function(layer,template,veg_field="fccarb",
 		filter= FALSE,forest_field= "lulucf", forest_code = 1,reclass=TRUE,
 		resolution = 150, origin = 0, ...){
@@ -449,20 +371,6 @@ is_vegetated_vect <- function(layer,template,veg_field="fccarb",
 }
 
 
-#' 
-#' @param layer 
-#' @param template 
-#' @param forest_field 
-#' @param forest_code 
-#' @param reclass 
-#' @param resolution 
-#' @param origin 
-#' @param ... 
-#' @returnType 
-#' @return 
-#' 
-#' @author Paco
-#' @export
 vegetated_cover_vect <- function(layer,template,filter=TRUE,
 		forest_field= "lulucf", forest_code = 1,reclass=TRUE,
 		resolution = 150, origin = 0, ...){
@@ -523,7 +431,6 @@ vegetated_cover_vect <- function(layer,template,filter=TRUE,
 		writeRaster(layer,...)
 	}
 }
-
 
 houses <- st_read("Data/CATASTRO/CATASTRO_CyL.gpkg",
 		layer = "Building")
