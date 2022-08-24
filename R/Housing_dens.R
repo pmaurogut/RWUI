@@ -16,39 +16,42 @@ create_template <- function(layer, buffer=0,origin=0, resolution){
 	
 	if(inherits(layer,c("SpatVector","sf"))){
 		
-		
 		if(missing(resolution)){
 			stop("resolution must be passed if layer is a vector")
 		}
 		if(inherits(layer,"sf")){
-			layer <- vect(layer)
+			template <- st_as_sf(st_as_sfc(st_bbox(layer)))
+		}else{
+			template<-st_as_sf(as.polygons(ext(layer)))
 		}
 		
 	}else if(inherits(layer,c("SpatRaster","Raster"))) {
+		
 		if(inherits(layer,"Raster")){
 			layer <- rast(layer)
 		}
 		resolution <- res(layer)
 		origin <- origin(layer)
+		template<-st_as_sf(as.polygons(ext(layer)))
 	}
-	
-	tryCatch(
-		{
-		template<-as.polygons(ext(layer))
+	print(class(template))
+	tryCatch({
 		if(buffer>0){
-			template <- buffer(template)
+			template <- st_buffer(template, dist=buffer)
+			template <- vect(template)
 			template <- ext(template)
+			
 		}else{
-			template <- ext(template)
+			template <- ext(vect(template))
 		}
+		print(class(template))
 		template <- rast(extent= template,
-				resolution = resolution, crs = crs(layer)@projargs)	
+				resolution = resolution, crs = crs(layer,proj=TRUE)@projargs)	
 		origin(template) <- origin
-		template
-			},
-		error=function(e){
+		return(template)
+			},error=function(e){
 			print("Unable to create template")	
-			e
+			return(e)
 		}
 	)
 	
@@ -73,8 +76,6 @@ reclass_stewart_wui <- function(housing_dens, is_vegetated, is_exposed) {
 	return(result)
 }
 
-
-
 stewart_wui <- function(housing_density, is_forest, is_exposed, ...) {
 	
 	housing_density <- as(housing_density,"Raster")
@@ -97,51 +98,51 @@ stewart_wui <- function(housing_density, is_forest, is_exposed, ...) {
     }
 }
 
-
-
-
 housing_dens <- function(houses, template, origin = 0,resolution = 150, 
 						distance = 225, kernel="circular",  classes = FALSE, ...) {
     
 	if (missing(template)|inherits(template,c("SpatVector","sf","Raster"))) {
-        template <- create_template(houses,buffer=resolution*blocks
-			,origin=origin,resolution=resolution)
+        template <- create_template(houses,buffer=2*distance,
+			origin=origin,resolution=resolution)
     }
     if (!inherits(template, "SpatRaster")) {
         stop("template is not a SpatRaster and it cannot be converted to one")
     }
 
-    houses <- try({
-        houses <- st_as_sf(houses)
-    })
-
-    centroids <- try({
+    density <- tryCatch({
+		houses <- st_as_sf(houses)
         centroids <- st_centroid(houses)
         centroids <- vect(centroids)
-        centroids
-    })
+       	terra::rasterize(crds(centroids),
+				template,fun = length, background = 0)
+    }, error= function(e){
+		print("error rasterizing houses")
+		return(e)
+	})
 
-    density <- terra::rasterize(crds(centroids),
-        template,
-        fun = length, background = 0
-    )
-    resolution <- res(template)[1]
-	if(kernel=="circular"){
-		base_vect <- -ceiling(distance/resolution):ceiling(distance/resolution)
-		w <- outer(base_vect,base_vect,
-				function(x,y,res){res*sqrt(x^2+y^2)},res=resolution)
-		w[]<-ifelse(w[]>distance,0,1)
+	tryCatch({
+		resolution <- res(template)[1]
+		if(kernel=="circular"){
+			base_vect <- -ceiling(distance/resolution):ceiling(distance/resolution)
+			w <- outer(base_vect,base_vect,
+					function(x,y,res){res*sqrt(x^2+y^2)},res=resolution)
+			w[]<-ifelse(w[]>distance,0,1)
 #		total area kernel in km2
-		den <- sum(w[])*resolution*resolution/1e6
-		w[]<-w[]/den
-	}else{
-		blocks <- 2*ceiling(distance/resolution)+1
-		w <- matrix(1, nc = blocks, nr = blocks)
-		w <- 1e6*w/(length(blocks) * resolution)^2
-	}
+			den <- sum(w[])*resolution*resolution/1e6
+			w[]<-w[]/den
+		}else{
+			blocks <- 2*ceiling(distance/resolution)+1
+			w <- matrix(1, nc = blocks, nr = blocks)
+			w <- 1e6*w/(length(blocks) * resolution)^2
+		}
+		
+		return(terra::focal(density,w=w,...))
+		
+		}, error= function(e){
+			print("Error generating housing density from raster of houses counts")
+			return(e)
+		})
 
-	terra::focal(density,w=w,...)
-	
 }
 
 
@@ -152,7 +153,7 @@ delineate_forest <- function(forest, forest_code = 1,to_raster=TRUE, ...){
 			forest<- try(rast(forest))
 		}
 		if(inherits(forest,"try-error")){
-			stop("Failed creating template")
+			stop("Forest is not a SpatRaster or can be converted to one")
 		}
 	}
 
@@ -160,11 +161,9 @@ delineate_forest <- function(forest, forest_code = 1,to_raster=TRUE, ...){
 
 	polys <- terra::as.polygons(forest)
 	polys <- sf::st_as_sf(polys)
-	polys$area <- st_area(polys)
-	polys <- polys[,c("area")]
 	polys$id <- 1:dim(polys)[1]
-	polys <- polys[,c("id","area")]
-	
+	polys <- polys[,"id"]
+
 	if(to_raster){
 		try(terra::rasterize(vect(polys),forest_only, "id",...))
 	}else{
@@ -175,8 +174,6 @@ delineate_forest <- function(forest, forest_code = 1,to_raster=TRUE, ...){
 		}
 	}
 }
-
-
 
 is_ember_exposed <- function(forest,template,
 		forest_field= "lulucf",  forest_code = 1,
@@ -246,39 +243,33 @@ is_ember_exposed <- function(forest,template,
 					filtered$large_forest<-1
 					forest <-terra::rasterize(filtered,
 							template,field="large_forest",crs=crs(template))
-					is_exposed <- distance(forest)
+					is_exposed <- terra::distance(forest)
 					is_exposed[] <- ifelse(is_exposed[]>max_ember_dist,NA,1)
 				})
-		
-		
 		
 		if(to_raster==FALSE){
 			
 			tryCatch({
-				delineate_forest(is_exposed,1,to_raster=FALSE,...)
-					},
-					error=function(e){
-						stop("Error delineating exposed areas")
-						e
-					}
-					)
+					delineate_forest(is_exposed,1,to_raster=FALSE,...)
+				},error=function(e){
+					stop("Error delineating exposed areas")
+					e
+				})
 		}else{
-			
 			if(missing(...)){
 				return(is_exposed)
 			}else{
 				writeRaster(is_exposed,...)
 			}
-			
 		}
 
 		
 	}else{
 		
 		buffer <- try({
-					is_exposed <- st_buffer(filtered,max_ember_dist)
-					is_exposed$is_exposed <- TRUE
-					is_exposed <- vect(is_exposed)
+				is_exposed <- st_buffer(filtered,max_ember_dist)
+				is_exposed$is_exposed <- TRUE
+				is_exposed <- vect(is_exposed)
 				})
 		
 		if(inherits(buffer,c("try-error"))){
@@ -312,7 +303,6 @@ is_ember_exposed <- function(forest,template,
 					template,field="is_exposed",crs=crs(template),...)
 			
 		}
-		
 		
 	}
 	
@@ -404,7 +394,8 @@ vegetated_cover_vect <- function(layer,template,filter=TRUE,
 	created <- try({
 				layer <- st_as_sf(layer)
 				template <- raster(template)
-				forest_cover <-raster::rasterize(layer,template,getCover=TRUE,
+				forest_cover <-raster::rasterize(layer,template,
+						getCover=TRUE,
 						filename="test.tif",progress="window")
 				forest_cover <- rast(forest_cover)
 			})
@@ -415,9 +406,9 @@ vegetated_cover_vect <- function(layer,template,filter=TRUE,
 	
 	if(reclass){
 		reclassed <- try({
-					rclmat <- matrix(c(0, 0.50, 0,
-									0.50, 2, 1), ncol=3, byrow=TRUE)
-					layer <- terra::classify(forest_cover, rclmat, include.lowest=TRUE)
+				rclmat <- matrix(c(0, 0.50, 0,0.50, 2, 1), 
+						ncol=3, byrow=TRUE)
+				layer <- terra::classify(forest_cover, rclmat, include.lowest=TRUE)
 				})
 		
 		if(inherits(reclassed,c("try-error"))){
@@ -447,30 +438,20 @@ is_forest_mfe <- c(is_forest_mfe, 400)
 
 forest$is_forest <- 1
 
-is_forest <- is_vegetated_vect(forest,veg_field="fccarb",
-		filter= TRUE,forest_field= "lulucf", forest_code = is_forest_mfe,
-		filename="Output/is_forest.tif",overwrite=TRUE)
-cover <- vegetated_cover_vect(forest,forest_field= "lulucf", forest_code = is_forest_mfe,
-		filename="Output/forest_cover.tif",overwrite=TRUE)
-housing_density<-housing_dens(houses,is_forest,filename="Output/housing_density.tif",overwrite=TRUE)
+forest2 <- forest[forest$prov_nom=="Soria",]
 
-is_exposed <- is_ember_exposed(forest,template=is_forest,
+cover <- vegetated_cover_vect(forest2,forest_field= "lulucf", forest_code = is_forest_mfe,
+		filename="Output/forest_cover.tif",overwrite=TRUE)
+
+is_exposed <- is_ember_exposed(forest2,template=cover,
 		forest_field= "lulucf",  forest_code = is_forest_mfe,
 		max_ember_dist=2e3,min_patch_size=5e6,
 		resoultion=150,origin=0,
 		filename="Output/is_exposed.tif",overwrite=TRUE)
 
+housing_density<-housing_dens(houses,cover,
+		filename="Output/housing_density.tif",overwrite=TRUE)
+
 classes <- stewart_wui(housing_density,is_forest,is_exposed,
 		filename="Data/stewart.tif",overwrite=TRUE,progress=1)
 plot(classes)
-
-
-test <- function(x){
-	
-	a<-tryCatch({stop("Error 1")},error=function(e)e)
-	b <- stop("Error 2")
-	x
-	
-}
-
-a<-test(1)
