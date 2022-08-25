@@ -423,6 +423,46 @@ vegetated_cover_vect <- function(layer,template,filter=TRUE,
 	}
 }
 
+vegetated_cover_rast <- function(layer,template,filter=TRUE,
+		forest_code = 1,reclass=TRUE,
+		resolution = 150, origin = 0, ...){
+	
+	
+	if (missing(layer)) {
+		stop("layer is missing")
+	}
+	
+	if (!inherits(template, "SpatRaster")) {
+		stop("template is not a SpatRaster and cannot be used as template")
+	}
+	
+	if(inherits(layer,c("raster","SpatRaster"))){
+			
+		delineated1 <- try({
+					forest <- delineate_forest(layer,forest_code,to_raster=FALSE)
+					forest$is_forest <- 1
+				})
+		
+		if(inherits(delineated1,c("try-error"))){
+			stop("Error delineating forest areas")
+		}
+		
+	}else{
+		stop("layer must be a raster or SpatRater object")
+	}
+	
+	if(missing(template)){
+		vegetated_cover_vect(forest,filter=filter,forest_field="is_forest",
+				forest_code=1,reclass=reclass,resolution=resolution,origin=origin,...)
+	}else{
+		vegetated_cover_vect(forest,template=template,filter=filter,forest_field="is_forest",
+				forest_code=1,reclass=reclass,resolution=resolution,origin=origin,...)
+	}
+	
+}
+
+
+
 houses <- st_read("Data/CATASTRO/CATASTRO_CyL.gpkg",
 		layer = "Building")
 houses <- houses[houses$currentUse %in% c("1_residential", "3_industrial", "4_3_publicServices"), ]
