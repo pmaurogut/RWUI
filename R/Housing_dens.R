@@ -452,6 +452,6 @@ is_exposed <- is_ember_exposed(forest2,template=cover,
 housing_density<-housing_dens(houses,cover,
 		filename="Output/housing_density.tif",overwrite=TRUE)
 
-classes <- stewart_wui(housing_density,is_forest,is_exposed,
+classes <- stewart_wui(housing_density,cover,is_exposed,
 		filename="Data/stewart.tif",overwrite=TRUE,progress=1)
 plot(classes)
