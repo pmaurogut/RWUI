@@ -480,7 +480,8 @@ forest$is_forest <- 1
 
 forest2 <- forest[forest$prov_nom=="Soria",]
 
-cover <- vegetated_cover_vect(forest2,forest_field= "lulucf", forest_code = is_forest_mfe,
+cover <- vegetated_cover_vect(forest2,forest_field= "lulucf", 
+		forest_code = is_forest_mfe,reclass=FALSE,
 		filename="Output/forest_cover.tif",overwrite=TRUE)
 
 is_exposed <- is_ember_exposed(forest2,template=cover,
