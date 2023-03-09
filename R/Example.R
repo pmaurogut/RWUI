@@ -12,8 +12,8 @@ library("stars")
 # buildings<-st_read("Data/Miguel/zonaestudio.shp") # nolint
 # buildings<-st_buffer(buildings,1000)
 
-buildings <- st_read("Data/Miguel/42150/Garray.gpkg")
-st_write(buildings, "Data/Miguel/Edificios.shp", overwrite = TRUE)
+buildings <- st_read("Data/Garray.gpkg")
+st_write(buildings, "Data/Edificios.shp", overwrite = TRUE)
 
 bbox <- st_bbox(buildings)
 lidar <- catalog("Data/Miguel")
